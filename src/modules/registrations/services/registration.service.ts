@@ -9,6 +9,9 @@ import { EmailService } from '../../email/services/email.service';
 import { CacheService } from '../../cache/services/cache.service';
 import { EventGateway } from '../../websocket/gateways/event.gateway';
 import { LoggerService } from 'src/shared/services/logger.service';
+import { RegistrationUtil } from 'src/shared/utils/registration.util';
+import { REGISTRATION_CACHE_PREFIX, WEBSOCKET_EVENTS } from 'src/shared/constants/registration.constants';
+import { RegistrationResponse, RegistrationStats } from 'src/shared/interfaces/registration.interface';
 
 @Injectable()
 export class RegistrationService {
@@ -26,68 +29,80 @@ export class RegistrationService {
     private eventGateway: EventGateway,
   ) {}
 
-  async create(createRegistrationDto: CreateRegistrationDto): Promise<Registration> {
+  async create(createRegistrationDto: CreateRegistrationDto): Promise<RegistrationResponse> {
     this.logger.log(`Creating registration for event: ${createRegistrationDto.eventId}`);
-    try {
-      const event = await this.eventRepository.findOne({
-        where: { id: createRegistrationDto.eventId },
-        relations: ['registrations'],
-      });
 
-      if (!event) {
-        this.logger.warn(`Event not found: ${createRegistrationDto.eventId}`);
-        throw new NotFoundException('Event not found');
-      }
+    const event = await this.eventRepository.findOne({
+      where: { id: createRegistrationDto.eventId },
+      relations: ['registrations'],
+    });
 
-      const attendee = await this.attendeeRepository.findOne({
-        where: { id: createRegistrationDto.attendeeId },
-      });
-
-      if (!attendee) {
-        this.logger.warn(`Attendee not found: ${createRegistrationDto.attendeeId}`);
-        throw new NotFoundException('Attendee not found');
-      }
-
-      const existingRegistration = await this.registrationRepository.findOne({
-        where: {
-          eventId: createRegistrationDto.eventId,
-          attendeeId: createRegistrationDto.attendeeId,
-        },
-      });
-
-      if (existingRegistration) {
-        this.logger.warn(`Duplicate registration attempt: ${JSON.stringify(createRegistrationDto)}`);
-        throw new BadRequestException('Attendee is already registered for this event');
-      }
-
-      if (event.registrations.length >= event.maxAttendees) {
-        this.logger.warn(`Event ${event.id} has reached maximum capacity`);
-        throw new BadRequestException('Event has reached maximum capacity');
-      }
-
-      const registration = this.registrationRepository.create({
-        eventId: event.id,
-        attendeeId: attendee.id,
-        event,
-        attendee,
-      });
-
-      const savedRegistration = await this.registrationRepository.save(registration);
-      this.logger.log(`Registration created successfully: ${savedRegistration.id}`);
-
-      await this.emailService.sendRegistrationConfirmation(
-        attendee.email,
-        event.name,
-        event.date,
-      );
-
-      await this.checkAndNotifyCapacity(event);
-
-      return savedRegistration;
-    } catch (error) {
-      this.logger.error(`Failed to create registration: ${error.message}`, error.stack);
-      throw error;
+    if (!event) {
+      throw new NotFoundException('Event not found');
     }
+
+    const stats = RegistrationUtil.calculateStats(event.registrations.length, event.maxAttendees);
+    
+    if (stats.isFullyBooked) {
+      throw new BadRequestException('Event has reached maximum capacity');
+    }
+
+    // Create registration
+    const registration = await this.createRegistration(createRegistrationDto);
+    const response = RegistrationUtil.formatResponse(registration);
+
+    // Handle notifications
+    await this.handlePostRegistrationTasks(event, registration);
+
+    return response;
+  }
+
+  private async createRegistration(dto: CreateRegistrationDto): Promise<Registration> {
+    const existingRegistration = await this.registrationRepository.findOne({
+      where: {
+        eventId: dto.eventId,
+        attendeeId: dto.attendeeId,
+      },
+    });
+
+    if (existingRegistration) {
+      throw new BadRequestException('Attendee is already registered for this event');
+    }
+
+    const registration = this.registrationRepository.create(dto);
+    return this.registrationRepository.save(registration);
+  }
+
+  private async handlePostRegistrationTasks(event: Event, registration: Registration): Promise<void> {
+    const stats = RegistrationUtil.calculateStats(
+      event.registrations.length + 1,
+      event.maxAttendees
+    );
+
+    // Cache invalidation
+    const cacheKey = RegistrationUtil.generateCacheKey(event.id);
+    await this.cacheService.del(cacheKey);
+
+    // WebSocket notifications
+    if (RegistrationUtil.shouldSendCapacityWarning(stats.availableSpots)) {
+      this.eventGateway.server.emit(WEBSOCKET_EVENTS.CAPACITY_WARNING, {
+        eventId: event.id,
+        availableSpots: stats.availableSpots,
+      });
+    }
+
+    if (stats.isFullyBooked) {
+      this.eventGateway.server.emit(WEBSOCKET_EVENTS.FULLY_BOOKED, {
+        eventId: event.id,
+      });
+    }
+
+    // Send confirmation email
+    await this.emailService.sendRegistrationConfirmation(
+      registration.attendee.email,
+      event.name,
+      event.date,
+    );
   }
 
   async findByEventId(eventId: string): Promise<Registration[]> {
@@ -150,11 +165,16 @@ export class RegistrationService {
     }
   }
 
-  private async checkAndNotifyCapacity(event: Event): Promise<void> {
-    const remainingSpots = event.maxAttendees - event.registrations.length;
-    if (remainingSpots <= 2) {
-      this.logger.warn(`Event ${event.id} has only ${remainingSpots} spots remaining`);
-      this.eventGateway.notifyEventCapacityUpdate(event.id, remainingSpots);
+  async getEventWithRegistrations(eventId: string): Promise<Event> {
+    const event = await this.eventRepository.findOne({
+      where: { id: eventId },
+      relations: ['registrations'],
+    });
+
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
+
+    return event;
   }
 } 

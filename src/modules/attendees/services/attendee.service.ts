@@ -1,11 +1,14 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Attendee } from '../entities/attendee.entity';
 import { CreateAttendeeDto } from '../dto/attendee.dto';
 import { Registration } from '../../registrations/entities/registration.entity';
 import { CacheService } from '../../cache/services/cache.service';
 import { LoggerService } from 'src/shared/services/logger.service';
+import { AttendeeUtil } from 'src/shared/utils/attendee.util';
+import { ATTENDEE_CACHE_PREFIX } from 'src/shared/constants/attendee.constants';
+import { AttendeeSearchParams, AttendeeResponse } from 'src/shared/interfaces/attendee.interface';
 
 @Injectable()
 export class AttendeeService {
@@ -19,7 +22,13 @@ export class AttendeeService {
     private cacheService: CacheService,
   ) {}
 
-  async create(createAttendeeDto: CreateAttendeeDto): Promise<Attendee> {
+  async create(createAttendeeDto: CreateAttendeeDto): Promise<AttendeeResponse> {
+    this.logger.log(`Creating attendee with email: ${createAttendeeDto.email}`);
+
+    if (!AttendeeUtil.validateEmail(createAttendeeDto.email)) {
+      throw new BadRequestException('Invalid email format');
+    }
+
     const existingAttendee = await this.attendeeRepository.findOne({
       where: { email: createAttendeeDto.email },
     });
@@ -29,22 +38,40 @@ export class AttendeeService {
     }
 
     const attendee = this.attendeeRepository.create(createAttendeeDto);
-    return this.attendeeRepository.save(attendee);
+    const savedAttendee = await this.attendeeRepository.save(attendee);
+
+    return AttendeeUtil.formatResponse(savedAttendee);
   }
 
-  async findAll(search?: string): Promise<Attendee[]> {
-    if (search) {
-      return this.attendeeRepository.find({
-        where: [
-          { name: Like(`%${search}%`) },
-          { email: Like(`%${search}%`) },
-        ],
-      });
+  async findAll(params: AttendeeSearchParams): Promise<AttendeeResponse[]> {
+    const { search, includeEvents } = params;
+    const queryBuilder = this.attendeeRepository.createQueryBuilder('attendee');
+
+    if (includeEvents) {
+      queryBuilder
+        .leftJoinAndSelect('attendee.registrations', 'registration')
+        .leftJoinAndSelect('registration.event', 'event');
     }
-    return this.attendeeRepository.find();
+
+    if (search) {
+      queryBuilder.where(
+        'attendee.name ILIKE :search OR attendee.email ILIKE :search',
+        { search: `%${search}%` }
+      );
+    }
+
+    const attendees = await queryBuilder.getMany();
+    return attendees.map(AttendeeUtil.formatResponse);
   }
 
-  async findOne(id: string): Promise<Attendee> {
+  async findOne(id: string): Promise<AttendeeResponse> {
+    const cacheKey = AttendeeUtil.generateCacheKey(id);
+    const cached = await this.cacheService.get<AttendeeResponse>(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
     const attendee = await this.attendeeRepository.findOne({
       where: { id },
       relations: ['registrations', 'registrations.event'],
@@ -54,7 +81,10 @@ export class AttendeeService {
       throw new NotFoundException(`Attendee with ID ${id} not found`);
     }
 
-    return attendee;
+    const response = AttendeeUtil.formatResponse(attendee);
+    await this.cacheService.set(cacheKey, response);
+
+    return response;
   }
 
   async findAttendeesWithMultipleRegistrations(): Promise<Attendee[]> {
@@ -111,20 +141,21 @@ export class AttendeeService {
   }
 
   async remove(id: string): Promise<void> {
-    const attendee = await this.findOne(id);
-
-    const hasRegistrations = await this.registrationRepository.count({
-      where: { attendeeId: id },
+    const attendee = await this.attendeeRepository.findOne({
+      where: { id },
+      relations: ['registrations'],
     });
 
-    if (hasRegistrations) {
+    if (!attendee) {
+      throw new NotFoundException(`Attendee with ID ${id} not found`);
+    }
+
+    if (attendee.registrations?.length) {
       throw new BadRequestException('Cannot delete attendee with existing registrations');
     }
 
     await this.attendeeRepository.remove(attendee);
-
-    // Invalidate cache
-    await this.cacheService.del(`attendees:${id}`);
-    await this.cacheService.del('attendees:all');
+    await this.cacheService.del(`${ATTENDEE_CACHE_PREFIX}${id}`);
+    await this.cacheService.del(`${ATTENDEE_CACHE_PREFIX}all`);
   }
 } 
