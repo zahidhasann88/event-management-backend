@@ -10,8 +10,8 @@ import { CacheService } from '../../cache/services/cache.service';
 import { EventGateway } from '../../websocket/gateways/event.gateway';
 import { LoggerService } from 'src/shared/services/logger.service';
 import { RegistrationUtil } from 'src/shared/utils/registration.util';
-import { REGISTRATION_CACHE_PREFIX, WEBSOCKET_EVENTS } from 'src/shared/constants/registration.constants';
-import { RegistrationResponse, RegistrationStats } from 'src/shared/interfaces/registration.interface';
+import { WEBSOCKET_EVENTS } from 'src/shared/constants/registration.constants';
+import { RegistrationResponse } from 'src/shared/interfaces/registration.interface';
 
 @Injectable()
 export class RegistrationService {
@@ -23,7 +23,6 @@ export class RegistrationService {
     @InjectRepository(Event)
     private eventRepository: Repository<Event>,
     @InjectRepository(Attendee)
-    private attendeeRepository: Repository<Attendee>,
     private emailService: EmailService,
     private cacheService: CacheService,
     private eventGateway: EventGateway,

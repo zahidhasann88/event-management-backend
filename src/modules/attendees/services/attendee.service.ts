@@ -18,7 +18,6 @@ export class AttendeeService {
     @InjectRepository(Attendee)
     private attendeeRepository: Repository<Attendee>,
     @InjectRepository(Registration)
-    private registrationRepository: Repository<Registration>,
     private cacheService: CacheService,
   ) {}
 

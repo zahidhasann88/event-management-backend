@@ -7,7 +7,6 @@ import { CreateEventDto } from '../dto/event.dto';
 import { UpdateEventDto } from '../dto/update-event.dto';
 import { EventGateway } from '../../websocket/gateways/event.gateway';
 import { CacheService } from '../../cache/services/cache.service';
-import { EVENT_CAPACITY, EVENT_WEBSOCKET_EVENTS } from 'src/shared/constants/event.constants';
 import { CACHE_PREFIX } from 'src/shared/constants/cache.constants'
 import { DateUtil } from 'src/shared/utils/date.util';
 import { PaginationUtil } from 'src/shared/utils/pagination.util';

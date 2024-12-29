@@ -1,34 +1,56 @@
-# Event Management System
+# Event Management System API
 
-A NestJS-based API for managing events, attendees, and registrations with real-time updates and email notifications.
+A NestJS-based API for managing events, attendees, and registrations with real-time updates, caching, and email notifications.
 
 ## Features
 
-- Event Management (CRUD operations)
+### Core Features
+- Event Management (CRUD)
+  - Create and list events
+  - Prevent overlapping events
+  - Manage attendee capacity
 - Attendee Management
-- Registration System with capacity control
+  - Register new attendees
+  - Unique email validation
+- Registration System
+  - Register attendees for events
+  - Capacity control
+  - Duplicate registration prevention
+  - List registrations with attendee details
+
+### Advanced Features
 - Real-time WebSocket Updates
-- Email Notifications using Bull Queue
+  - Event capacity notifications
+  - New event notifications
+- Email Notifications (Bull Queue)
+  - Registration confirmation
+  - Event reminders
 - Redis Caching
-- Scheduled Event Reminders
+  - Event details caching
+  - Cache invalidation
 - Health Monitoring
+  - Database health
+  - Redis health
+  - Email service health
+  - WebSocket health
 
 ## Prerequisites
 
 - Node.js (v16+)
 - PostgreSQL
 - Redis
+- SMTP Server (for emails)
 
 ## Installation
 
 ```bash
-# Clone the repository
+# Clone repository
 git clone <repository-url>
 
 # Install dependencies
 npm install
 
-# Configure environment variables
+# Configure environment
 cp .env.example .env
 ```
 
@@ -63,6 +85,16 @@ EMAIL_FROM=noreply@events.com
 REMINDER_BEFORE_EVENT_HOURS=24
 ```
 
+## Database Setup
+
+```bash
+# Create database
+createdb event
+
+# Run migrations
+npm run migration:run
+```
+
 ## Running the Application
 
 ```bash
@@ -82,102 +114,78 @@ Swagger documentation available at: `http://localhost:3000/api`
 
 #### Events
 - `POST /events` - Create event
+  ```json
+  {
+    "name": "Tech Conference 2024",
+    "description": "Annual tech conference",
+    "date": "2024-12-25T09:00:00Z",
+    "location": "Convention Center",
+    "maxAttendees": 100
+  }
+  ```
 - `GET /events` - List all events
+  - Query params: startDate, endDate
 - `GET /events/:id` - Get event details
 - `PATCH /events/:id` - Update event
 - `DELETE /events/:id` - Delete event
-- `GET /events/stats/most-registrations` - Get event with most registrations
+- `GET /events/stats/most-registrations` - Get most popular event
 
 #### Attendees
 - `POST /attendees` - Create attendee
-- `GET /attendees` - List all attendees
+  ```json
+  {
+    "name": "John Doe",
+    "email": "john.doe@example.com"
+  }
+  ```
+- `GET /attendees` - List attendees
+  - Query params: search, page, limit
 - `GET /attendees/:id` - Get attendee details
 - `DELETE /attendees/:id` - Delete attendee
-- `GET /attendees/stats/multiple-registrations` - Get attendees with multiple events
 
 #### Registrations
 - `POST /registrations` - Register for event
+  ```json
+  {
+    "eventId": "uuid",
+    "attendeeId": "uuid"
+  }
+  ```
 - `GET /registrations/event/:eventId` - List event registrations
 - `DELETE /registrations/:id` - Cancel registration
 
-### Health Check
-
-- `GET /health` - Check system health status (Database, Redis, Bull, Email, WebSocket)
-
-## WebSocket Events
+### WebSocket Events
 
 Connect to WebSocket at `ws://localhost:3000`
 
-### Events
-- `eventCapacityUpdate` - Notifies when event capacity changes
-- `newEvent` - Notifies when new event is created
-- `eventUpdated` - Notifies when event is updated
-- `eventDeleted` - Notifies when event is deleted
+Events:
+- `eventCapacityUpdate` - Event capacity changes
+- `newEvent` - New event created
+- `eventUpdated` - Event updated
+- `eventDeleted` - Event deleted
 
-### Example WebSocket Client
-```javascript
-const socket = io('http://localhost:3000');
+### Health Check
 
-socket.on('connect', () => {
-  console.log('Connected to WebSocket');
-});
-
-socket.on('eventCapacityUpdate', (data) => {
-  console.log('Event capacity update:', data);
-});
-
-// Join specific event room
-socket.emit('joinEvent', 'event-uuid');
-```
+- `GET /health` - System health status
+  - Database connection
+  - Redis connection
+  - Email service
+  - Bull queue
+  - WebSocket server
 
 ## Features Implementation
 
 ### Caching
 - Event details cached for 1 hour
-- Cache invalidation on updates/deletes
-- Redis used as cache store
+- Cache invalidation on updates
+- Redis as cache store
 
 ### Email Notifications
 - Registration confirmation
 - Event reminders (24h before)
-- Registration cancellation
-- Async processing using Bull Queue
+- Async processing with Bull
 
-### Scheduling
-- Automated event reminders
-- Expired events cleanup
-- Health checks
-
-## Development
-
-```bash
-# Generate migration
-npm run migration:generate
-
-# Run migrations
-npm run migration:run
-
-# Run tests
-npm run test
-
-# Run e2e tests
-npm run test:e2e
-```
-
-## Project Structure
-```
-src/
-├── config/                 # Configuration
-├── core/                  # Core modules
-├── modules/               # Feature modules
-│   ├── events/
-│   ├── attendees/
-│   ├── registrations/
-│   ├── email/
-│   └── websocket/
-└── shared/               # Shared resources
-```
-
-## License
-
-[MIT licensed](LICENSE)
+### Real-time Updates
+- WebSocket for live updates
+- Capacity warnings
+- Event notifications
